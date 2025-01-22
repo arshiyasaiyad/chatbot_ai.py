@@ -1,0 +1,242 @@
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import Toplevel
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from googletrans import Translator
+import speech_recognition as sr
+from difflib import get_close_matches
+import numpy as np
+import pyttsx3  # Import pyttsx3 for text-to-speech
+
+# FAQ Dataset
+faq_data = {
+    "What is AI?": "AI stands for Artificial Intelligence, which is the simulation of human intelligence in machines.",
+    "What is Python?": "Python is a high-level programming language used for web development, data science, and more.",
+    "What is Machine Learning?": "Machine learning is a subset of AI where algorithms learn patterns from data to make predictions.",
+    "What is Tkinter?": "Tkinter is a standard GUI (Graphical User Interface) library in Python for building desktop applications."
+}
+
+questions = list(faq_data.keys())
+answers = list(faq_data.values())
+
+# Model Initialization
+def initialize_model():
+    """Initializes and trains the model."""
+    print("Initializing and training the model...")
+    model_pipeline = make_pipeline(TfidfVectorizer(), LogisticRegression(max_iter=500))
+    model_pipeline.fit(questions, answers)
+    return model_pipeline
+
+# Train the model initially
+model = initialize_model()
+
+chat_history = []
+
+# Retrain the model dynamically
+def retrain_model():
+    """Retrains the model after adding new FAQs."""
+    global model
+    try:
+        model = initialize_model()
+        print("Model retrained successfully with new FAQs.")
+    except Exception as e:
+        print(f"Error during retraining: {e}")
+
+# Function to handle user input and provide answers
+def get_answer():
+    """Handles user queries and provides an answer."""
+    user_input = user_entry.get()
+    if user_input:
+        # Display user input and translate
+        translator = Translator()
+        translated_input = translator.translate(user_input, src='auto', dest='en').text
+        print(f"User input: {user_input}")  # Debug
+        print(f"Translated input: {translated_input}")  # Debug
+
+        try:
+            # Vectorize input and predict answer
+            vectorized_input = model.named_steps["tfidfvectorizer"].transform([translated_input])
+            prediction = model.predict([translated_input])[0]
+            probabilities = model.predict_proba([translated_input])[0]
+            max_prob = np.max(probabilities)
+
+            print(f"Prediction: {prediction}")  # Debug: Print prediction
+            print(f"Prediction probabilities: {probabilities}")  # Debug: Print prediction probabilities
+            print(f"Max probability: {max_prob}")  # Debug: Print max probability
+
+            # Display the prediction or suggest close matches
+            if max_prob >= 0.3:  # Adjust confidence threshold as needed
+                show_answer_dialog(f"Answer: {prediction}")
+            else:
+                suggestions = get_close_matches(user_input, questions, n=3, cutoff=0.5)
+                if suggestions:
+                    suggestion_text = "\n".join(suggestions)
+                    show_answer_dialog(f"Sorry, I don't know the answer.\nDid you mean:\n{suggestion_text}")
+                else:
+                    show_answer_dialog("Sorry, I don't have an answer to that question.")
+
+            # Add to chat history
+            chat_history.append(f"Q: {user_input}")
+            chat_history.append(f"A: {prediction}")
+            history_label.config(text="\n".join(chat_history))  # Update the history
+
+        except Exception as e:
+            show_answer_dialog("Error in model prediction. Check logs.")
+            print(f"Error during prediction: {e}")
+    else:
+        messagebox.showwarning("Input Error", "Please enter a question.")
+
+# Show the answer in a separate dialog box with Alice font
+def show_answer_dialog(answer_text):
+    """Displays the answer in a separate dialog box."""
+    answer_dialog = Toplevel(root)  # Create a new top-level window
+    answer_dialog.title("Answer")
+    answer_dialog.geometry("400x200")
+    answer_dialog.config(bg="#f0f4f8")
+    
+    # Add a label to display the answer with Alice font
+    try:
+        answer_label = tk.Label(answer_dialog, text=answer_text, font=("Alice", 14), bg="#f0f4f8", wraplength=350)
+    except:
+        answer_label = tk.Label(answer_dialog, text=answer_text, font=("Arial", 14), bg="#f0f4f8", wraplength=350)  # Fallback if Alice is not available
+
+    answer_label.pack(pady=40, padx=20)
+
+    # Add a close button to close the dialog
+    close_button = tk.Button(answer_dialog, text="Close", command=answer_dialog.destroy, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"))
+    close_button.pack(pady=10)
+
+# Add a new FAQ
+def add_faq():
+    """Adds a new FAQ and retrains the model."""
+    new_question = user_entry.get()
+    new_answer = answer_entry.get()
+    if new_question and new_answer:
+        faq_data[new_question] = new_answer
+        questions.append(new_question)
+        answers.append(new_answer)
+        retrain_model()  # Retrain the model
+        response_label.config(text="New FAQ added successfully!")
+        show_answer_dialog("New FAQ added successfully!")
+    else:
+        messagebox.showwarning("Input Error", "Please enter both a question and an answer.")
+
+# Reset all fields and labels
+def reset_all():
+    """Resets the input and output fields."""
+    user_entry.delete(0, tk.END)
+    answer_entry.delete(0, tk.END)
+    response_label.config(text="Answer: ")
+    show_answer_dialog("Fields have been reset!")
+
+# Clear chat history
+def clear_history():
+    """Clears the chat history."""
+    global chat_history
+    chat_history = []
+    history_label.config(text="")
+    response_label.config(text="Answer: ")
+    show_answer_dialog("Chat history cleared!")
+
+# Save chat history to file
+def save_chat_history():
+    """Saves chat history to a file."""
+    with open("chat_history.txt", "a") as file:
+        for line in chat_history:
+            file.write(line + "\n")
+    messagebox.showinfo("History Saved", "Chat history saved to 'chat_history.txt'")
+    show_answer_dialog("Chat history saved!")
+
+# Function to capture speech
+def capture_speech():
+    """Captures speech and fills in the text input."""
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        try:
+            print("Listening for your question...")  # Debug: Indicate listening
+            audio = recognizer.listen(source)
+            user_input = recognizer.recognize_google(audio)
+            print(f"Recognized speech: {user_input}")  # Debug: Print recognized speech
+            user_entry.delete(0, tk.END)
+            user_entry.insert(0, user_input)
+            get_answer()
+        except sr.UnknownValueError:
+            messagebox.showerror("Speech Error", "Sorry, I couldn't understand that.")
+        except sr.RequestError:
+            messagebox.showerror("Speech Error", "Could not request results from Google Speech Recognition service.")
+
+# Function for Text-to-Speech from Chat History
+def text_to_speech():
+    """Converts the last answer(s) from chat history to speech."""
+    if chat_history:
+        # Concatenate all answers in chat history
+        answer_text = "\n".join(line for line in chat_history if line.startswith("A:"))
+        if answer_text:
+            engine = pyttsx3.init()  # Initialize the pyttsx3 engine
+            engine.say(answer_text)  # Speak the concatenated answers
+            engine.runAndWait()  # Run the engine to produce speech
+        else:
+            messagebox.showwarning("Text to Speech Error", "No answers available in chat history.")
+    else:
+        messagebox.showwarning("Text to Speech Error", "Chat history is empty.")
+
+# Tkinter GUI Setup
+root = tk.Tk()
+root.title("Enhanced FAQ Chatbot")
+root.geometry("600x700")
+root.config(bg="#f0f4f8")
+
+# Adding a header label
+header_label = tk.Label(root, text="FAQ Chatbot", font=("Arial", 24, "bold"), bg="#A8D5BA", fg="black", pady=20)
+header_label.pack(fill="x")
+
+
+# Ask question section
+question_label = tk.Label(root, text="Ask a question:", bg="#f0f4f8", font=("Arial", 12), pady=10)
+question_label.pack()
+
+user_entry = tk.Entry(root, width=50, font=("Arial", 14), bd=2, relief="solid", highlightthickness=2, highlightbackground="#4CAF50")
+user_entry.pack(pady=10, padx=20)
+
+# Provide answer section (for adding new FAQ)
+answer_label = tk.Label(root, text="Provide an answer (if adding FAQ):", bg="#f0f4f8", font=("Arial", 12))
+answer_label.pack(pady=5)
+
+answer_entry = tk.Entry(root, width=50, font=("Arial", 14), bd=2, relief="solid", highlightthickness=2, highlightbackground="#4CAF50")
+answer_entry.pack(pady=10, padx=20)
+
+# Buttons
+ask_button = tk.Button(root, text="Ask", command=get_answer, bg="#A8D5BA", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+ask_button.pack(pady=10)
+
+add_button = tk.Button(root, text="Add FAQ", command=add_faq, bg="#A3C1DA", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+add_button.pack(pady=10)
+
+reset_button = tk.Button(root, text="Reset All", command=reset_all, bg="#F0E68C", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+reset_button.pack(pady=10)
+
+clear_button = tk.Button(root, text="Clear Chat", command=clear_history, bg="#FFB6C1", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+clear_button.pack(pady=10)
+
+save_button = tk.Button(root, text="Save History", command=save_chat_history, bg="#D8BFD8", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+save_button.pack(pady=10)
+
+speech_button = tk.Button(root, text="Speak", command=capture_speech, bg="#B5EAD7", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+speech_button.pack(pady=10)
+
+# Text-to-Speech Button
+tts_button = tk.Button(root, text="Text-to-Speech", command=text_to_speech, bg="#FFCC99", fg="black", font=("Arial", 12, "bold"), relief="flat", padx=20, pady=10)
+tts_button.pack(pady=10)
+
+# Chat history
+history_label = tk.Label(root, text="", anchor="w", justify="left", width=50, height=10, bg="lightgray", font=("Arial", 10), bd=2, relief="solid", padx=10, pady=10)
+history_label.pack(pady=10)
+
+# Chat response label
+response_label = tk.Label(root, text="Answer: ", bg="#f0f4f8", font=("Arial", 14), wraplength=500)
+response_label.pack(pady=10)
+
+# Run the Tkinter event loop
+root.mainloop()
